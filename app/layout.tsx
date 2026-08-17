@@ -3,7 +3,7 @@ import { Providers } from "./providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://coursework-compass.vercel.app"),
+  metadataBase: new URL("https://coursework-compass-black.vercel.app"),
   title: "Coursework Compass — Know what to do next",
   description: "Turn large coursework into a clear, calm plan — and always know what to do next.",
   applicationName: "Coursework Compass",
