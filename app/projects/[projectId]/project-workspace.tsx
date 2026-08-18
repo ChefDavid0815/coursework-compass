@@ -26,10 +26,12 @@ import {
   PLANNING_INTENSITIES,
   formatIntensity,
   formatTemplate,
+  getProjectTaskSummary,
   loadProject,
   saveProject,
   type Project,
 } from "../_data/project-store";
+import { TaskItem } from "../_components/task-item";
 
 function parseDate(value: string): Date | undefined {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
@@ -118,18 +120,24 @@ function HydratedProjectWorkspace({ projectId }: { projectId: string }) {
   const [titleDraft, setTitleDraft] = useState(project.title);
   const [titleError, setTitleError] = useState("");
   const [dateOpen, setDateOpen] = useState(false);
+  const [skipTaskMotion, setSkipTaskMotion] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (editingTitle) titleInputRef.current?.focus();
   }, [editingTitle]);
 
-  const actionableTasks = useMemo(() => project.tasks.filter((task) => task.actionable), [project.tasks]);
-  const completedCount = actionableTasks.filter((task) => task.completed).length;
-  const progress = actionableTasks.length ? Math.round((completedCount / actionableTasks.length) * 100) : 0;
-  const nextTask = actionableTasks.find((task) => !task.completed);
+  useEffect(() => {
+    if (!skipTaskMotion) return;
+    const frame = window.requestAnimationFrame(() => setSkipTaskMotion(false));
+    return () => window.cancelAnimationFrame(frame);
+  }, [skipTaskMotion, project.tasks]);
+
+  const { actionableTasks, completedCount, progress, nextTask, complete } = useMemo(
+    () => getProjectTaskSummary(project.tasks),
+    [project.tasks],
+  );
   const deadline = deadlineCopy(project.deadline);
-  const complete = actionableTasks.length > 0 && completedCount === actionableTasks.length;
 
   function commit(patch: Partial<Project>, message: string) {
     const next = { ...project, ...patch };
@@ -173,8 +181,23 @@ function HydratedProjectWorkspace({ projectId }: { projectId: string }) {
     }
   }
 
+  function toggleTask(taskId: string, completed: boolean, skipMotion: boolean) {
+    if (skipMotion) setSkipTaskMotion(true);
+    const tasks = project.tasks.map((task) => task.id === taskId ? { ...task, completed } : task);
+    const next = { ...project, tasks };
+    try {
+      saveProject(next);
+      setProject(next);
+    } catch {
+      toast.error("Couldn’t update that task", {
+        id: "task-completion-error",
+        description: "Your previous task state is still intact.",
+      });
+    }
+  }
+
   return (
-    <main className="workspace-shell" data-ready>
+    <main className="workspace-shell" data-ready data-skip-task-motion={skipTaskMotion || undefined}>
       <header className="workspace-chrome">
         <Link className="workspace-brand" href="/" aria-label="Coursework Compass home">
           <BrandMark className="brand__mark" />
@@ -290,6 +313,34 @@ function HydratedProjectWorkspace({ projectId }: { projectId: string }) {
               <><h2>No actionable steps yet.</h2><p>Your project details are safe. Task planning arrives in the next phase.</p></>
             )}
           </div>
+        </section>
+
+        <section className="workspace-plan" aria-labelledby="project-plan-title">
+          <div className="workspace-plan__heading">
+            <div>
+              <p className="ui-eyebrow">Project plan</p>
+              <h2 id="project-plan-title">The work, in order.</h2>
+            </div>
+            <p>{actionableTasks.length} {actionableTasks.length === 1 ? "step" : "steps"}</p>
+          </div>
+
+          {actionableTasks.length ? (
+            <ol className="task-list">
+              {actionableTasks.map((task, index) => (
+                <TaskItem
+                  key={task.id}
+                  task={task}
+                  position={index + 1}
+                  onCompletionChange={toggleTask}
+                />
+              ))}
+            </ol>
+          ) : (
+            <div className="task-list-empty">
+              <p>No planned steps yet.</p>
+              <span>Your project details are safe. Task planning arrives in a later phase.</span>
+            </div>
+          )}
         </section>
       </div>
     </main>

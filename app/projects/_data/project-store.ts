@@ -26,6 +26,7 @@ export type ProjectTask = {
   title: string;
   completed: boolean;
   actionable: boolean;
+  estimatedTime?: string;
 };
 
 export type Project = {
@@ -54,20 +55,49 @@ function asDateString(value: unknown): string | undefined {
   return /^\d{4}-\d{2}-\d{2}$/.test(datePart) ? datePart : text;
 }
 
+function asEstimatedTime(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return `${value} min`;
+  }
+  return asString(value);
+}
+
 function readTasks(value: unknown): ProjectTask[] {
   if (!Array.isArray(value)) return [];
+  const usedIds = new Set<string>();
   return value.flatMap((entry, index) => {
     if (!isRecord(entry)) return [];
     const title = asString(entry.title) ?? asString(entry.name) ?? asString(entry.text);
     if (!title) return [];
     const status = asString(entry.status)?.toLowerCase();
+    const candidateId = asString(entry.id) ?? `task-${index + 1}`;
+    let id = candidateId;
+    let suffix = 2;
+    while (usedIds.has(id)) id = `${candidateId}-${suffix++}`;
+    usedIds.add(id);
     return [{
-      id: asString(entry.id) ?? `task-${index + 1}`,
+      id,
       title,
       completed: entry.completed === true || entry.done === true || status === "completed" || status === "done",
       actionable: entry.actionable !== false && status !== "archived" && status !== "cancelled",
+      estimatedTime: asEstimatedTime(entry.estimatedTime)
+        ?? asEstimatedTime(entry.estimate)
+        ?? asEstimatedTime(entry.duration)
+        ?? asEstimatedTime(entry.estimatedMinutes),
     }];
   });
+}
+
+export function getProjectTaskSummary(tasks: ProjectTask[]) {
+  const actionableTasks = tasks.filter((task) => task.actionable);
+  const completedCount = actionableTasks.filter((task) => task.completed).length;
+  return {
+    actionableTasks,
+    completedCount,
+    progress: actionableTasks.length ? Math.round((completedCount / actionableTasks.length) * 100) : 0,
+    nextTask: actionableTasks.find((task) => !task.completed),
+    complete: actionableTasks.length > 0 && completedCount === actionableTasks.length,
+  };
 }
 
 function normalizeProject(raw: UnknownRecord, fallbackId: string): Project {
@@ -128,6 +158,22 @@ export function saveProject(project: Project): void {
     const index = stored.projects.findIndex((candidate) => String(candidate.id) === project.id);
     if (index < 0) continue;
     const previous = stored.projects[index];
+    const previousTasks = Array.isArray(previous.tasks) ? previous.tasks : [];
+    const tasks = project.tasks.map((task, taskIndex) => {
+      const matchingTask = previousTasks.find((candidate) => isRecord(candidate) && candidate.id === task.id);
+      const indexedTask = previousTasks[taskIndex];
+      const previousTask = isRecord(matchingTask) ? matchingTask : isRecord(indexedTask) ? indexedTask : {};
+      return {
+        ...previousTask,
+        id: task.id,
+        title: task.title,
+        completed: task.completed,
+        done: task.completed,
+        status: task.completed ? "completed" : "pending",
+        actionable: task.actionable,
+        ...(task.estimatedTime ? { estimatedTime: task.estimatedTime } : {}),
+      };
+    });
     stored.projects[index] = {
       ...previous,
       id: project.id,
@@ -135,6 +181,7 @@ export function saveProject(project: Project): void {
       courseworkType: project.courseworkType,
       deadline: project.deadline,
       planningIntensity: project.planningIntensity,
+      tasks,
     };
     const next = stored.container ? { ...stored.container, projects: stored.projects } : stored.projects;
     window.localStorage.setItem(key, JSON.stringify(next));
